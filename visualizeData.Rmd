@@ -1,0 +1,154 @@
+---
+title: "visualizeData"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, results = "hold", fig.show = "hold")
+library(GenomicRanges)
+library(Biostrings)
+library(dplyr)
+library(reticulate)
+library(ggplot2)
+# use_condaenv("rpy3_tmp")
+Sys.setenv("RETICULATE_PYTHON"="/home/users/bentyeh/miniconda3/envs/rpy3_tmp/bin/python")
+options(stringsAsFactors = FALSE)
+
+if (.Platform$OS.type == "unix") {
+    projectDir = normalizePath("~/projects/disprot")
+    source("~/scripts/R/utils-convert.R")
+} else {
+    projectDir = normalizePath("~/Projects/disprot")
+    source("~/Projects/scripts_private/R/utils-convert.R")
+}
+files <- import_from_path(module='files', path=file.path(projectDir, 'scripts'))
+paths = files$getPaths()
+source(file.path(projectDir, 'scripts', 'disorderedSeqs.R'))
+source(file.path(projectDir, 'scripts', 'featurize.R'))
+```
+
+# Get Data
+
+Reference data sources
+
+```{r}
+disorderPredAll = readr::read_tsv(paths[['d2p2DisorderHuman_vsl2b']])
+idMap = readr::read_tsv(paths[['idMap']]) %>%
+  dplyr::filter(!is.na(d2p2_id)) %>%
+  dplyr::filter(!duplicated(d2p2_id))
+aaProps = readr::read_tsv(paths[['aaProps']])
+aaClassMap = dfToNamedVec(df = aaProps, key = "AA", value = "class")
+featuresDB = readRDS(paths[['featuresDB_full_0']])
+uniprotProteome = readr::read_tsv(paths[['uniprotProteome']])
+```
+
+Gene lists
+
+```{r}
+gl_TFs = readr::read_tsv(paths[['gl_TFs']])
+gl_random = readr::read_tsv(paths[['gl_random']])
+gl_medComplex = readr::read_tsv(paths[['gl_medComplex']])
+gl_mediatorTFs_human = readr::read_tsv(paths[['gl_mediatorTFs_human']])
+gl_POLR = readr::read_tsv(paths[['gl_POLR']])
+glAll = dplyr::bind_rows(
+  dplyr::mutate(gl_random, label='random'),
+  dplyr::mutate(gl_TFs, label='TFs'),
+  dplyr::mutate(gl_mediatorTFs_human, label='mediatorTFs'),
+  dplyr::mutate(gl_medComplex, label='medComplex'),
+  dplyr::mutate(gl_POLR, label='POLR'))
+```
+
+```{r}
+#gl_TFs = readr::read_tsv(paths[['gl_TFs']])
+disorderPred_TFs = disorderPredAll %>%
+  dplyr::filter(d2p2_id %in% gl_TFs$d2p2_id) %>%
+  dplyr::arrange(d2p2_id, start, end, predictor_id) %>%
+  dplyr::rename(predictor = predictor_id)
+tmp = extractDisorder(disorderPred = disorderPred_TFs, proteome = idMap)
+disorderRanges_TFs = tmp$disorderRanges
+disorderSeqs_TFs = tmp$disorderSeqs
+```
+
+```{r}
+#gl_random = readr::read_tsv(paths[['gl_random']])
+disorderPred_random = disorderPredAll %>%
+  dplyr::filter(d2p2_id %in% gl_random$d2p2_id) %>%
+  dplyr::arrange(d2p2_id, start, end, predictor_id) %>%
+  dplyr::rename(predictor = predictor_id)
+tmp = extractDisorder(disorderPred = disorderPred_random, proteome = idMap)
+disorderRanges_random = tmp$disorderRanges
+disorderSeqs_random = tmp$disorderSeqs
+```
+
+Combine gene lists
+
+```{r}
+disorderSeqsList = AAStringSetList(random=disorderSeqs_random, TFs=disorderSeqs_TFs)
+disorderRangesList = list(random=disorderRanges_random, TFs=disorderRanges_TFs)
+```
+
+# Visualize Data
+
+## Full sequences
+
+```{r}
+glAll = glAll %>% dplyr::mutate(uniprotName = uniprotProteome[['uniprotName']][match(glAll[['uniprot_id']], uniprotProteome[['id']])])
+glAll = glAll[!duplicated(glAll),]
+glAll_features = matchFeatures(glAll, featuresDB, dataset_cols = "uniprotName", features = NULL)
+```
+
+```{r}
+p = prcomp(glAll_features)
+data = as.data.frame(p$x)
+data$label = glAll[['label']][glAll[['uniprotName']] %in% names(featuresDB$aac)]
+pca = ggplot(data = data) +
+  geom_point(aes_string(x = "PC1", y = "PC2", color='label'))
+```
+
+```{r}
+ggplot(data = data) + geom_point(aes_string(x = "PC1", y = "PC2", color='label'))
+ggplot(data = data) + geom_point(aes_string(x = "PC3", y = "PC4", color='label'))
+ggplot(data = data) + geom_point(aes_string(x = "PC5", y = "PC6", color='label'))
+ggplot(data = data) + geom_point(aes_string(x = "PC1", y = "PC2", color='label'))
+```
+
+## Disordered Regions
+
+Set disordered region length threshold
+
+```{r}
+thresh = 50
+```
+
+### Sequence analysis
+
+```{r}
+g = plotPCA(disorderSeqsList, thresh=thresh, pcs=c("PC1", "PC2"), plot=TRUE)
+print(g + xlim(-140, 15) + ylim(-70, 55))
+
+g = plotPCA(disorderSeqsList, thresh=thresh, pcs=c("PC3", "PC4"), plot=TRUE, verbose=FALSE)
+print(g + xlim(-35, 35) + ylim(-35, 30))
+```
+
+```{r}
+plotCharFreq(disorderSeqsList, scale=TRUE, thresh=50, aaClassMap=aaClassMap)
+```
+
+### Disorder Analysis
+
+```{r}
+g = plotHist(disorderRangesList, fun = width, varname = "width", thresh = 50, plot = FALSE)
+print(g + scale_x_log10() + labs(title = "Length of disordered regions"))
+
+g = plotHist(disorderRangesList, fun = function(x) {calcProps(x, "prop_dr")},
+             varname = "percent_disordered", thresh = 50, plot = FALSE)
+print(g + labs(title = "Percent disordered"))
+
+g = plotHist(disorderRangesList, fun = function(x) {calcProps(x, "num_dr")},
+             varname = "number_of_disordered_regions", thresh = 50, plot = FALSE)
+print(g + scale_x_log10() + labs(title = "Number of disordered regions"))
+
+g = plotHist(disorderRangesList, fun = function(x) {calcProps(x, "num_dr_norm")},
+             varname = "number_of_disordered_regions", thresh = 50, plot = FALSE)
+print(g + labs(title = "Number of disordered regions normalized by protein length"))
+```
