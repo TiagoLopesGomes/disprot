@@ -1,0 +1,125 @@
+---
+title: "Process Data"
+output: html_notebook
+# set output to html_document to make it an R Markdown document
+---
+
+# Setup
+
+```{r setup}
+library(biomaRt)
+library(dplyr)
+library(reticulate)
+use_condaenv("rpy3_tmp")
+Sys.setenv("RETICULATE_PYTHON"="/home/users/bentyeh/miniconda3/envs/rpy3_tmp/bin/python")
+options(stringsAsFactors = FALSE)
+
+if (.Platform$OS.type == "unix") {
+    projectDir = normalizePath("~/projects/disprot")
+    source("~/scripts/R/utils-convert.R")
+} else {
+    projectDir = normalizePath("~/Projects/disprot")
+    source("~/Projects/scripts_private/R/utils-convert.R")
+}
+files <- import_from_path(module='files', path=file.path(projectDir, 'scripts'))
+paths = files$getPaths()
+```
+
+# Download Data
+
+BioMart: download Ensembl (gene, transcript, protein) <-> UniProt <-> HGNC symbol + APPRIS annotation for proteins in the UniProt canonical transcripts proteome.
+
+```{r}
+uniprotProteome = readr::read_tsv(paths[['uniprotProteome']])
+mart = biomaRt::useMart(biomart = 'ensembl', dataset = 'hsapiens_gene_ensembl')
+df = biomaRt::getBM(
+    attributes = c('ensembl_gene_id',
+                   'ensembl_transcript_id',
+                   'ensembl_peptide_id',
+                   'uniprotswissprot',
+                   'hgnc_symbol',
+                   'transcript_appris'),
+    filters = "uniprotswissprot",
+    values = unique(uniprotProteome$id),
+    uniqueRows = TRUE,
+    mart = mart)
+readr::write_tsv(df, paths[['ensemblBiomart_raw']])
+```
+
+# Process Data
+
+```{r}
+uniprotProteome = readr::read_tsv(paths[['uniprotProteome']])
+idMap = readr::read_tsv(paths[['idMap']]) %>%
+  dplyr::filter(!is.na(d2p2_id)) %>%
+  dplyr::filter(!duplicated(d2p2_id))
+```
+
+## Gene Lists
+
+Transcription factors reported to interact with mediator subunits (Source: Boija, A. et al. Cell 175, (2018). Table S1.)
+
+```{r}
+tb = readr::read_tsv(paths[['gl_mediatorTFs_raw']])
+gl = unique(c(unlist(tb), names(tb)))
+gl = gl[!is.na(gl)]
+gl[gl == "THRA/THRB"] = "THRA"
+gl = unique(c(gl, "THRB"))
+```
+
+
+```{r}
+human = c("SOX2", "GATA2", "MYC", "PPARG", "RARA",
+          "CEBPA", "VDR", "RXRA", "GATA1", "THRA",
+          "AHR", "AR", "NR1I3", "PPARA", "KLF4",
+          "SOX9", "GLI3", "NANOG", "JUNB", "SREBF1",
+          "FOS", "HNF4A", "RESTELF3", "RB1", "REST",
+          "ELK1", "MED1", "MED12", "MED14", "MED15",
+          "MED16", "MED17", "MED19", "MED21", "MED23",
+          "MED25", "MED26", "MED29", "CDK8", "THRB",
+          "ELF3")
+names(human) = human
+human = c(human,
+          'OCT3/4'='POU5F1',
+          'P53'='TP53',
+          'ER1'='ESR1',
+          'HNF4'='HNF4A',
+          'SREBP1'='SREBF1',
+          'RORa'='RORA',
+          'GR'='NR3C1',
+          'FXR'='NR1H4',
+          'Pit-1'='POU1F1',
+          'ER2'='ESR2',
+          'B-CATENIN'='CTNNB1',
+          'AICD'='APP',
+          'P65'='RELA',
+          'HIF'='HIF1A',
+          'C/EBP'='CEBPB',
+          'ESX'='ELF3',
+          'RXR'='RXRB'
+)
+
+# for non-human proteins, map directly to UniProt sequences to avoid ambiguity
+fly = c('DSX'='P23023', 'DIF'='P98149', 'HSF'='P22813') # Drosophila melanogaster (Fruit fly)
+herpes_simplex = c('VP16'='P06492') # Human herpesvirus 1 (strain 17) (HHV-1) (Human herpes simplex virus 1)
+herpes_kshv = c('RTA'='F5HCV3') # Human herpesvirus 8 type P (isolate GK18) (HHV-8) (Kaposi's sarcoma-associated herpesvirus)
+
+# assert that all genes have been checked
+stopifnot(gl %in% c(names(human), names(fly), names(herpes_simplex), names(herpes_kshv)))
+```
+
+```{r}
+human_tfs = human[gl[gl %in% names(human)]]
+swissprotProteome = uniprotProteome %>% dplyr::filter(db %in% 'sp')
+stopifnot(all(human_tfs %in% swissprotProteome[['gn']]))
+human_tfs_ids = swissprotProteome[["id"]][match(human_tfs, swissprotProteome[["gn"]])]
+mediatorTF_ids = c(human_tfs_ids,
+                   fly[gl[gl %in% names(fly)]],
+                   herpes_simplex[gl[gl %in% names(herpes_simplex)]],
+                   herpes_kshv[gl[gl %in% names(herpes_kshv)]])
+mediatorTFs_human = data.frame(uniprot_id = human_tfs_ids, hgnc_symbol=human_tfs) %>%
+  dplyr::mutate(d2p2_id = idMap[['d2p2_id']][match(hgnc_symbol, idMap[['hgnc_symbol']])])
+readr::write_lines(mediatorTF_ids, paths[['gl_mediatorTFs']])
+readr::write_tsv(mediatorTFs_human, paths[['gl_mediatorTFs_human']])
+```
+
