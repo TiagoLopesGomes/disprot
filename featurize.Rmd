@@ -1,5 +1,5 @@
 ---
-title: "Featurize PPIs"
+title: "cs229_poster"
 output: html_document
 ---
 
@@ -28,7 +28,13 @@ source(file.path(projectDir, 'scripts', 'featurize.R'))
 # Parameters for this script
 
 ```{r params}
+compress_save = TRUE
+useExistingFeaturesDB = TRUE
+createFullFeaturesDB = FALSE
 cores = 31
+
+ext_features = ifelse(compress_save, ".tsv.gz", ".tsv")
+ext_labels = ifelse(compress_save, ".txt.gz", ".txt")
 ```
 
 # Features database
@@ -36,9 +42,40 @@ cores = 31
 Read in features database or create it if it does not exist
 
 ```{r featuresDB}
-featuresDB = createFeaturesDB(paths[['uniprotProteome']], save = paths[['featuresDB_full_0']], lambda = 0, cores = cores)
-featuresDB = createFeaturesDB(paths[['uniprotProteome']], save = paths[['featuresDB_full_50']], lambda = 50, cores = cores,
-                              features = c("APAAC", "PAAC", "Geary", "Moran", "MoreauBroto", "QSO", "SOCN"))
+# read data
+trainset_files = sort(list.files(paths[['dirDataML']], pattern = "train_set\\d+\\.tsv.gz", full.names = FALSE))
+testset_files = sort(list.files(paths[['dirDataML']], pattern = "test_set\\d+\\.tsv.gz", full.names = FALSE))
+nTrainFiles = length(trainset_files)
+nTestFiles = length(testset_files)
+
+if (createFullFeaturesDB) {
+  featuresDB = createFeaturesDB(paths[['uniprotProteome']], save = paths[['featuresDB_full_0']], lambda = 0, cores = cores)
+  featuresDB = createFeaturesDB(paths[['uniprotProteome']], save = paths[['featuresDB_full_50']], lambda = 50, cores = cores,
+                                features = c("APAAC", "PAAC", "Geary", "Moran", "MoreauBroto", "QSO", "SOCN"))
+  featuresDB = createFeaturesDB(paths[['uniprotProteome']], save = paths[['featuresDB_full_100']], lambda = 100, cores = cores,
+                                features = c("APAAC", "PAAC", "Geary", "Moran", "MoreauBroto", "QSO", "SOCN"))
+} else {
+  if (useExistingFeaturesDB && file.exists(paths[['featuresDB_full']])) {
+    featuresDB = readRDS(paths[['featuresDB_full']])
+  } else if (useExistingFeaturesDB && file.exists(paths[['featuresDB_small']])) {
+    featuresDB = readRDS(paths[['featuresDB_small']])
+  } else {
+    # create small features database consisting only of unique identifiers in data
+    ids = NULL
+    for (i in 1:nTrainFiles) {
+      trainset = readr::read_tsv(file.path(paths[['dirDataML']], trainset_files[i]))
+      ids = c(ids, trainset[["p1_uniprotName"]], trainset[["p2_uniprotName"]])
+    }
+    for (i in 1:nTestFiles) {
+      testset = readr::read_tsv(file.path(paths[['dirDataML']], testset_files[i]))
+      ids = c(ids, testset[["p1_uniprotName"]], testset[["p2_uniprotName"]])
+    }
+    ids = sort(unique(ids))
+
+    featuresDB = createFeaturesDB(paths[['uniprotProteome']], ids = ids, save = paths[['featuresDB_small']], cores = cores)
+  }
+  ids = names(featuresDB[[1]])
+}
 ```
 
 ```{r}
@@ -69,6 +106,8 @@ nCols = ncol(featuresAll_trim)
 aug = cbind(featuresAll_trim[,(nCols/2+1):nCols], featuresAll_trim[, 1:(nCols/2)])
 names(aug) = names(featuresAll_trim) # rbind() requires non-null matching column names
 featuresAll_aug = rbind(featuresAll_trim, aug)
+labelsAll_aug = rbind(dataAll_trim[['label']], dataAll_trim[['label']])
+readr::write_lines(labelsAll_aug, paths[['IDPpi_labelsAll_aug']])
 rm(aug)
 ```
 
