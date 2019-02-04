@@ -4,14 +4,16 @@ library(parallel)
 
 createFeaturesDB <- function(proteome, seq_col = "seq", name_col = "uniprotName", ids = NULL,
                              features = NULL, lambda = 0, nlag = lambda, save = NULL, cores = NULL) {
-  # Create features database. Feature extraction on each unique sequence.
+  # Create features database. Feature extraction on each unique sequence. Only keeps sequences
+  # consisting of the 20 canonical amino acids and with length > lambda
   # 
   # Notes: requires parallel package
   # 
   # Args
   # - proteome: data.frame or character
   #     Must contain `seq_col` and `name_col` columns. The `name_col` column is assumed to
-  #     consist of unique values. If a character, assumed to be the path to a .tsv proteome file.
+  #     consist of unique values. If a character, assumed to be the path to a tab-separated
+  #     proteome data frame file.
   # - seq_col: character. default = "seq"
   #     Column in `proteome` containing sequences
   # - name_col: character. default = "uniprotName"
@@ -21,8 +23,12 @@ createFeaturesDB <- function(proteome, seq_col = "seq", name_col = "uniprotName"
   # - features: vector, character. default = NULL
   #     Features to use. See the featureFuns map in the code below.
   #     If NULL, all features are extracted.
-  # - lambda: integer. default = 50
-  #     Parameter for pseudo amino acid composition featurization, passed as argument to protr::extractPAAC()
+  # - lambda: integer. default = 0
+  #     Parameter for pseudo amino acid composition descriptors (PAAC, APAAC)
+  #     Must be > 0 for pseudo amino acid composition descriptors to be used.
+  # - nlag: integer. default = lambda
+  #     Parameter for autocorrelational descriptors (Geary, Moran, MoreauBroto, QSO, SOCN)
+  #     Must be > 0 for autocorrelational descriptors to be used.
   # - save: character. default = NULL
   #     Path to save created features database.
   # - cores: integer. default = NULL
@@ -32,12 +38,15 @@ createFeaturesDB <- function(proteome, seq_col = "seq", name_col = "uniprotName"
   #   Features database. Each element (feature category) is a named list mapping peptide name
   #   to a vector of values in that feature category.
 
-  # only keep sequences consisting of the 20 canonical amino acids and with length > lambda
-  
   if (is.character(proteome)) {
     proteome = readr::read_tsv(proteome)
   }
+  
+  # only keep sequences consisting of the 20 canonical amino acids and with length > lambda
   validSeqs = sapply(proteome$seq, function(x) protr::protcheck(x) & nchar(x) > lambda)
+  if (sum(validSeqs) != nrow(proteome)) {
+    warning(paste0("Excluding ", sum(!validSeqs), " sequences with length <= lambda from features database."))
+  }
   proteome = proteome[validSeqs,]
   
   featureFuns_0 = c(AAC = protr::extractAAC,
@@ -57,6 +66,7 @@ createFeaturesDB <- function(proteome, seq_col = "seq", name_col = "uniprotName"
                        QSO = protr::extractQSO,
                        SOCN = protr::extractSOCN)
   
+  # choose features if no features specified (`features` is NULL)
   if (is.null(features)) {
     features = names(featureFuns_0)
     if (lambda > 0) {
@@ -66,8 +76,17 @@ createFeaturesDB <- function(proteome, seq_col = "seq", name_col = "uniprotName"
       features = c(features, names(featureFuns_nlag))
     }
   }
+  
+  # validate features
   stopifnot(features %in% c(names(featureFuns_0), names(featureFuns_lambda), names(featureFuns_nlag)))
-
+  if (lambda <= 0 && any(features %in% names(featureFuns_lambda))) {
+    stop("Must supply lambda > 0 to use pseudo amino acid composition descriptors")
+  }
+  if (nlag <= 0 && any(features %in% names(featureFuns_nlag))) {
+    stop("Must supply nlag > 0 to use autocorrelational descriptors")
+  }
+  
+  # choose sequences to featurize by id
   if (is.null(ids)) {
     seqs = proteome[[seq_col]]
     names(seqs) = proteome[[name_col]]
