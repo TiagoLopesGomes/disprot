@@ -113,12 +113,13 @@ human_tfs = human[gl[gl %in% names(human)]]
 swissprotProteome = uniprotProteome %>% dplyr::filter(db %in% 'sp')
 stopifnot(all(human_tfs %in% swissprotProteome[['gn']]))
 human_tfs_ids = swissprotProteome[["id"]][match(human_tfs, swissprotProteome[["gn"]])]
-mediatorTF_ids = c(human_tfs_ids,
-                   fly[gl[gl %in% names(fly)]],
-                   herpes_simplex[gl[gl %in% names(herpes_simplex)]],
-                   herpes_kshv[gl[gl %in% names(herpes_kshv)]])
+mediatorTF_ids = unique(c(human_tfs_ids,
+                          fly[gl[gl %in% names(fly)]],
+                          herpes_simplex[gl[gl %in% names(herpes_simplex)]],
+                          herpes_kshv[gl[gl %in% names(herpes_kshv)]]))
 mediatorTFs_human = data.frame(uniprot_id = human_tfs_ids, hgnc_symbol=human_tfs) %>%
-  dplyr::mutate(d2p2_id = idMap[['d2p2_id']][match(hgnc_symbol, idMap[['hgnc_symbol']])])
+  dplyr::mutate(d2p2_id = idMap[['d2p2_id']][match(hgnc_symbol, idMap[['hgnc_symbol']])]) %>%
+  dplyr::distinct()
 readr::write_lines(mediatorTF_ids, paths[['gl_mediatorTFs']])
 readr::write_tsv(mediatorTFs_human, paths[['gl_mediatorTFs_human']])
 ```
