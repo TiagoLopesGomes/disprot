@@ -1,5 +1,6 @@
 library(protr)
 library(readr)
+library(dplyr)
 library(parallel)
 
 createFeaturesDB <- function(proteome, seq_col = "seq", name_col = "uniprotName", ids = NULL,
@@ -182,6 +183,7 @@ matchFeatures <- function(dataset, featuresDB,
   #     Path to save features file. Compression will be applied automatically based on extension.
   # - labels_path: character. default = NULL
   #     Path to save labels file. Compression will be applied automatically based on extension.
+  #     Assumes `dataset` additionally contains "labels" column.
   # 
   # Returns: data.frame
   #   Features data.frame
@@ -204,7 +206,7 @@ matchFeatures <- function(dataset, featuresDB,
     # mat = cbind(mat, do.call(rbind, featuresDB[[feature]][match(dataset[["p2_uniprotName"]], ids)]))
   }
   df = as.data.frame(mat, stringsAsFactors = FALSE)
-  print(dim(df))
+  # print(dim(df))
   
   # save features and labels files
   if (!is.null(features_path)) {
@@ -215,6 +217,34 @@ matchFeatures <- function(dataset, featuresDB,
   }
 
   invisible(df)
+}
+
+featurize <- function(disorderSeqs, features, ...) {
+  # Create feature matrix for a set of sequences
+  # 
+  # Args
+  # - disorderSeqs: AAStringSet or data.frame
+  #     Set of sequences. Assumed to already be length/width-filtered.
+  #     If data.frame, must have columns "seq" and "names", and "names" should consist of
+  #     unique values (i.e., no duplicates).
+  # - features: vector, character
+  #     Features to include. See createFeaturesDB()
+  # - ...
+  #     Arguments to pass onto createFeaturesDB(), especially "lambda" and "nlag"
+  # 
+  # Returns: matrix
+  #   Rows represent sequences. Columns are different features.
+  
+  if (inherits(disorderSeqs, 'AAStringSet')) {
+    disorderSeqs = as.data.frame(disorderSeqs) %>%
+      dplyr::rename(seq = x) %>%
+      dplyr::mutate(names = as.character(1:length(disorderSeqs))) %>%
+      tibble::as.tibble()
+  }
+  featuresDB = createFeaturesDB(proteome = disorderSeqs, name_col = "names", features = features, ...)
+  featuresMat = as.matrix(matchFeatures(dataset = disorderSeqs, featuresDB = featuresDB,
+                                        dataset_cols = "names", features = features))
+  invisible(featuresMat)
 }
 
 main <- function() {

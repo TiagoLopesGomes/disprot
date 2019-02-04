@@ -38,7 +38,7 @@ idMap = readr::read_tsv(paths[['idMap']]) %>%
   dplyr::filter(!duplicated(d2p2_id))
 aaProps = readr::read_tsv(paths[['aaProps']])
 aaClassMap = dfToNamedVec(df = aaProps, key = "AA", value = "class")
-featuresDB = readRDS(paths[['featuresDB_full_0']])
+# featuresDB = readRDS(paths[['featuresDB_full_0']])
 uniprotProteome = readr::read_tsv(paths[['uniprotProteome']])
 ```
 
@@ -50,34 +50,14 @@ gl_random = readr::read_tsv(paths[['gl_random']])
 gl_medComplex = readr::read_tsv(paths[['gl_medComplex']])
 gl_mediatorTFs_human = readr::read_tsv(paths[['gl_mediatorTFs_human']])
 gl_POLR = readr::read_tsv(paths[['gl_POLR']])
+gl_activator = readr::read_tsv(paths[['gl_activator']])
+gl_repressor = readr::read_tsv(paths[['gl_repressor']])
 glAll = dplyr::bind_rows(
   dplyr::mutate(gl_random, label='random'),
   dplyr::mutate(gl_TFs, label='TFs'),
   dplyr::mutate(gl_mediatorTFs_human, label='mediatorTFs'),
   dplyr::mutate(gl_medComplex, label='medComplex'),
   dplyr::mutate(gl_POLR, label='POLR'))
-```
-
-```{r}
-#gl_TFs = readr::read_tsv(paths[['gl_TFs']])
-disorderPred_TFs = disorderPredAll %>%
-  dplyr::filter(d2p2_id %in% gl_TFs$d2p2_id) %>%
-  dplyr::arrange(d2p2_id, start, end, predictor_id) %>%
-  dplyr::rename(predictor = predictor_id)
-tmp = extractDisorder(disorderPred = disorderPred_TFs, proteome = idMap)
-disorderRanges_TFs = tmp$disorderRanges
-disorderSeqs_TFs = tmp$disorderSeqs
-```
-
-```{r}
-#gl_random = readr::read_tsv(paths[['gl_random']])
-disorderPred_random = disorderPredAll %>%
-  dplyr::filter(d2p2_id %in% gl_random$d2p2_id) %>%
-  dplyr::arrange(d2p2_id, start, end, predictor_id) %>%
-  dplyr::rename(predictor = predictor_id)
-tmp = extractDisorder(disorderPred = disorderPred_random, proteome = idMap)
-disorderRanges_random = tmp$disorderRanges
-disorderSeqs_random = tmp$disorderSeqs
 ```
 
 Combine gene lists
@@ -123,11 +103,11 @@ thresh = 50
 ### Sequence analysis
 
 ```{r}
-g = plotPCA(disorderSeqsList, thresh=thresh, pcs=c("PC1", "PC2"), plot=TRUE)
-print(g + xlim(-140, 15) + ylim(-70, 55))
-
-g = plotPCA(disorderSeqsList, thresh=thresh, pcs=c("PC3", "PC4"), plot=TRUE, verbose=FALSE)
-print(g + xlim(-35, 35) + ylim(-35, 30))
+g = compareGeneLists(gls = list(activator = gl_activator, repressor = gl_repressor),
+                     disorderPredAll = disorderPredAll,
+                     proteome = idMap,
+                     features = c("AAC", "DC", "CTriad", "PAAC", "Geary"),
+                     minLength = 30)
 ```
 
 ```{r}

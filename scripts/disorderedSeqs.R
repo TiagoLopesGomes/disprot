@@ -2,6 +2,7 @@ library(GenomicRanges)
 library(IRanges)
 library(Biostrings)
 library(ggplot2)
+source(file.path(projectDir, 'scripts', 'featurize.R'))
 
 # Variables
 # - disorderPred: data.frame
@@ -136,7 +137,9 @@ extractDisorder <- function(disorderPred, proteome,
   # 
   # Args
   # - disorderPred: data.frame
+  #     columns: start, end, `disorder_idCol`, `disorder_predCol`
   # - proteome: data.frame
+  #     columns: `proteome_seqCol`, `proteome_idCol`
   # - disorder_idCol, disorder_predCol, proteome_seqCol, proteome_idCol: character
   #     Relevant columns from data frames
   # 
@@ -161,28 +164,53 @@ extractDisorder <- function(disorderPred, proteome,
   return(invisible(list(disorderRanges=disorderRanges, disorderSeqs=disorderSeqs)))
 }
 
-plotPCA <- function(disorderSeqsList, thresh=0, pcs=c('PC1', 'PC2'), plot=TRUE, verbose=TRUE) {
+featurize_gl <- function(gl, disorderPredAll, proteome, features,
+                         minLength = 0, lambda = minLength, nlag = minLength,
+                         verbose = TRUE, ...) {
+  # Wrapper for featurize.R > featurize()
+  disorderPred_gl = disorderPredAll %>%
+    dplyr::filter(d2p2_id %in% gl$d2p2_id) %>%
+    dplyr::arrange(d2p2_id, start, end, predictor_id) %>%
+    dplyr::rename(predictor = predictor_id)
+  tmp = extractDisorder(disorderPred = disorderPred_gl, proteome = proteome)
+  disorderSeqs = tmp$disorderSeqs[width(tmp$disorderSeqs) >= minLength]
   if (verbose) {
-    print('Number of unique proteins (unfiltered)')
-    print(sapply(disorderSeqsList, function(x) length(unique(names(x)))))
-    print('Number of disordered regions (unfiltered)')
-    print(sapply(disorderSeqsList, length))
+    droppedProts = length(unique(names(tmp$disorderSeqs))) - length(unique(names(disorderSeqs)))
+    print(paste(droppedProts, "unique proteins did not have any predicted disordered regions of length >=", minLength))
   }
-  disorderSeqsList = sapply(disorderSeqsList, function(x) x[width(x) > thresh])
-  labels = unlist(sapply(names(disorderSeqsList),
-                         function(x) rep(x, length(disorderSeqsList[[x]]))))
-  if (verbose) {
-    print('Number of disordered regions (filtered)')
-    print(sapply(disorderSeqsList, length))
-  }
-  freq_mat = do.call(rbind, sapply(disorderSeqsList, alphabetFrequency))
-  p = prcomp(freq_mat)
+  mat = featurize(disorderSeqs, features, lambda = lambda, nlag = nlag, ...)
+  invisible(mat)
+}
+
+compareGeneLists <- function(gls, ...) {
+  # Compare featurization of 2 gene lists.
+  # 
+  # Args
+  # - gls: list of data.frame
+  #     list of gene list data.frames, each of which contains 3 columns: uniprot_id, hgnc_symbol, d2p2_id
+  #     The names of this list will be used as classes in plotting
+  # - disorderPredAll: data.frame
+  #     database of disorder predictions
+  #     columns: d2p2_id, start, end, predictor_id
+  # - proteome
+  # - features: vector, character
+  #     Features to include. See featurize.R > createFeaturesDB()
+  # - minLength: integer. default = 0
+  
+  mat_list = sapply(gls, function(gl) featurize_gl(gl, ...))
+  mat = do.call(rbind, mat_list)
+  rownames(mat) = unlist(sapply(1:length(gls), function(idx) rep(names(gls)[idx], nrow(mat_list[[idx]]))))
+  plot = plotPCA(mat)
+  invisible(list(plot = plot,
+                 mat = mat))
+}
+
+plotPCA <- function(mat, pcs=c('PC1', 'PC2'), plot=TRUE) {
+  p = prcomp(mat)
   data = as.data.frame(p$x)
-  data$label = labels
+  data$label = rownames(mat)
   pca = ggplot(data = data) +
-    geom_point(aes_string(x = pcs[1], y = pcs[2], color='label')) + 
-    labs(title="PCA of amino acid frequencies",
-         subtitle=paste('minimum disordered region length:', thresh))
+    geom_point(aes_string(x = pcs[1], y = pcs[2], color = 'label'))
   if (plot) {
     print(pca)
   }
