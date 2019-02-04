@@ -100,31 +100,54 @@ def getPaths(projectDir=None, ext='.gz', makedirs=True):
         'idMap': os.path.join(dirDataProc, 'idMap.tsv' + ext),
         
         # raw gene lists
-        # - mediatorTFs: transcription factor-mediator subunit interactions.
-        #     Boija, A. et al. Cell 175, (2018). Table S1.
-        # - QuickGO
+        # - mediatorTFs: transcription factor-Mediator subunit interactions
+        #     columns: MED1, MED12, MED14, MED15, MED16, MED17, MED19, MED21,
+        #       MED23, MED25, MED26, MED29, CDK8
+        #     source: Boija, A. et al. Cell 175, (2018). Table S1.
+        # - QuickGO: selection of transcription-related GO term annotations
+        #     columns: GENE PRODUCT DB, GENE PRODUCT ID, SYMBOL, QUALIFIER, GO TERM,
+        #       GO ASPECT, ECO ID, GO EVIDENCE CODE, REFERENCE, WITH/FROM, TAXON ID,
+        #       ASSIGNED BY, ANNOTATION EXTENSION, DATE, (optional) GO NAME,
+        #       (optional) SYNONYMS
+        #     source: processData.ipynb > Download Data section
+        # - interest: genes of interest
+        #     each line contains a single gene symbol
         'gl_mediatorTFs_raw': os.path.join(dirDataGeneListsRaw, 'mediatorTFs.tsv.gz'),
         'gl_QuickGO_raw': os.path.join(dirDataGeneListsRaw, 'QuickGO.tsv.gz'),
-        'gl_BioMart_raw': os.path.join(dirDataGeneListsRaw, 'BioMart.tsv.gz'),
         'gl_interest_raw': os.path.join(dirDataGeneListsRaw, 'gl_interest.txt'),
         
-        # gene lists
-        # - mediatorTFs: transcription factor-mediator subunit interactions.
-        #     Boija, A. et al. Cell 175, (2018). Table S1.
-        # - TFs_QuickGO: transcription factors
-        #     QuickGO GO:003700
-        # - TFs_BioMart: transcription factors
-        #     Ensembl BioMart - go_parent_term = GO:003700
-        # - mediatorComplex_QuickGO
-        # - mediatorComplex_BioMart
-        'gl_QuickGO': os.path.join(dirDataGeneLists, 'QuickGO.tsv' + ext),
-        'gl_GTFs': os.path.join(dirDataGeneLists, 'gl_GTFs.tsv' + ext),
+        # gene lists: processed gene lists
+        #   columns: uniprot_id, hgnc_symbol, d2p2_id
+        # 
+        #   Transcription factor-Mediator subunit interactions
+        #   - mediatorTFs: see raw gene lists
+        #       list (not table) of UniProt IDs, including human and non-human proteins
+        #   - mediatorTFs_human: human subset of mediatorTFs
+        #   - MED1: proteins that interact with MED1
+        #   - MED15: proteins that interact with MED15
+        # 
+        #   GO term annotations
+        #   - QuickGO: see raw gene lists
+        #   - TFs: GO:003700 (DNA-binding transcription factor activity)
+        #   - activator: GO:0001228 (DNA-binding transcription activator activity, RNA polymerase II-specific)
+        #   - repressor: GO:0001227 (DNA-binding transcription repressor activity, RNA polymerase II-specific)
+        # 
+        #   HGNC gene groups subsets
+        #   - GTFs: general transcription factors
+        #   - medComplex: mediator complex
+        #   - POLR: RNA polymerase subunits
         'gl_mediatorTFs': os.path.join(dirDataGeneLists, 'mediatorTFs.txt' + ext),
         'gl_mediatorTFs_human': os.path.join(dirDataGeneLists, 'mediatorTFs_human.tsv' + ext),
+        'gl_MED1': os.path.join(dirDataGeneLists, 'gl_MED1.tsv' + ext),
+        'gl_MED15': os.path.join(dirDataGeneLists, 'gl_MED15.tsv' + ext),
+        'gl_QuickGO': os.path.join(dirDataGeneLists, 'QuickGO.tsv' + ext),
+        'gl_TFs': os.path.join(dirDataGeneLists, 'gl_TFs.tsv' + ext),
+        'gl_activator': os.path.join(dirDataGeneLists, 'gl_activator.tsv' + ext),
+        'gl_repressor': os.path.join(dirDataGeneLists, 'gl_repressor.tsv' + ext),
+        'gl_GTFs': os.path.join(dirDataGeneLists, 'gl_GTFs.tsv' + ext),
         'gl_medComplex': os.path.join(dirDataGeneLists, 'gl_medComplex.tsv' + ext),
         'gl_POLR': os.path.join(dirDataGeneLists, 'gl_POLR.tsv' + ext),
         'gl_interest': os.path.join(dirDataGeneLists, 'gl_interest.tsv' + ext),
-        'gl_TFs': os.path.join(dirDataGeneLists, 'gl_TFs.tsv' + ext),
         'gl_random': os.path.join(dirDataGeneLists, 'gl_random.tsv' + ext),
         
         # miscellaneous
