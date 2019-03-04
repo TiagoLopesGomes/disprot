@@ -5,6 +5,8 @@ results
 notes
 test.ipynb
 old
+scripts/utils*
+scripts/downloadBio.py
 
 # ----- Python -----
 # Byte-compiled / optimized / DLL files
