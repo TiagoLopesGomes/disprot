@@ -1,118 +1,115 @@
 ---
-title: "cs229_poster"
+title: "featurize sequences"
 output: html_document
 ---
 
 # Setup
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+```{r setup, message = FALSE}
+knitr::opts_chunk$set(echo = TRUE, results = "hold", fig.show = "hold")
 library(readr)
+library(dplyr)
 library(reticulate)
-use_condaenv("rpy3_tmp")
-Sys.setenv("RETICULATE_PYTHON"="/home/users/bentyeh/miniconda3/envs/rpy3_tmp/bin/python")
-options(stringsAsFactors = FALSE)
+# use_condaenv('rpy3_tmp')
+Sys.setenv('RETICULATE_PYTHON'='/home/users/bentyeh/miniconda3/envs/rpy3_tmp/bin/python')
+options(stringsAsFactors=FALSE, warn=1)
 
-if (.Platform$OS.type == "unix") {
-    projectDir = normalizePath("~/projects/disprot")
-    source("~/scripts/R/utils-convert.R")
+if (.Platform$OS.type == 'unix') {
+    projectDir = normalizePath('~/projects/disprot')
 } else {
-    projectDir = normalizePath("~/Projects/disprot")
-    source("~/Projects/scripts_private/R/utils-convert.R")
+    projectDir = normalizePath('~/Projects/disprot')
 }
 files = reticulate::import_from_path(module='files', path=file.path(projectDir, 'scripts'))
 paths = files$getPaths()
+source(file.path(projectDir, 'scripts', 'disorderedSeqs.R'))
 source(file.path(projectDir, 'scripts', 'featurize.R'))
 ```
 
-# Parameters for this script
+# Featurization
+
+Script parameters
+- `rebuildDisorderProteome`: rebuild disorder proteome (Ensembl proteome + D2P2 ID)
+- `seqtypes`: 'full' (entire sequence); 'disorder' (only disordered regions)
+- `lambdas`: only featurize sequences larger than these thresholds
+- `features_sets`: features to use corresponding to `lambdas`
+- `cores`: number of processes to use
 
 ```{r params}
-compress_save = TRUE
-useExistingFeaturesDB = TRUE
-createFullFeaturesDB = FALSE
-cores = 31
-
-ext_features = ifelse(compress_save, ".tsv.gz", ".tsv")
-ext_labels = ifelse(compress_save, ".txt.gz", ".txt")
+rebuildDisorderProteome = FALSE
+keepFeaturesInMemory = TRUE
+seqtypes = c('full', 'disorder')
+lambdas = c(0, 25, 50, 75, 100)
+features_sets = list(setdiff(names(featureFuns_comp), 'TC'),
+                     c(names(featureFuns_paac), names(featureFuns_cor)),
+                     c(names(featureFuns_paac), names(featureFuns_cor)),
+                     c(names(featureFuns_paac), names(featureFuns_cor)),
+                     c(names(featureFuns_paac), names(featureFuns_cor)))
+cores = 32
 ```
 
-# Features database
+Build or read pre-existing proteome
 
-Read in features database or create it if it does not exist
+```{r proteome, message = FALSE}
+# Read in data
+d2p2DisorderHuman = readr::read_tsv(paths[['d2p2DisorderHuman_vsl2b']])
+d2p2ProteomeHuman = readr::read_tsv(paths[['d2p2ProteomeHuman']])
+ensemblProteome = readr::read_tsv(paths[['ensemblProteome63']])
 
-```{r featuresDB}
-# read data
-trainset_files = sort(list.files(paths[['dirDataML']], pattern = "train_set\\d+\\.tsv.gz", full.names = FALSE))
-testset_files = sort(list.files(paths[['dirDataML']], pattern = "test_set\\d+\\.tsv.gz", full.names = FALSE))
-nTrainFiles = length(trainset_files)
-nTestFiles = length(testset_files)
+# proteome: modified Ensembl proteome
+# - merge in D2P2 IDs: d2p2_id
+# - rename peptide id column: ensembl_peptide_id
+# - remove duplicated redundant sequences / D2P2 IDs (D2P2 IDs are non-redundant for sequences)
+proteome = ensemblProteome %>%
+  dplyr::rename(ensembl_peptide_id = id) %>%
+  dplyr::select(ensembl_peptide_id, seq) %>%
+  dplyr::right_join(d2p2ProteomeHuman, by = 'ensembl_peptide_id') %>%
+  dplyr::select(ensembl_peptide_id, d2p2_id, seq) %>%
+  dplyr::distinct(d2p2_id, .keep_all = TRUE)
 
-if (createFullFeaturesDB) {
-  featuresDB = createFeaturesDB(paths[['uniprotProteome']], save = paths[['featuresDB_full_0']], lambda = 0, cores = cores)
-  featuresDB = createFeaturesDB(paths[['uniprotProteome']], save = paths[['featuresDB_full_50']], lambda = 50, cores = cores,
-                                features = c("APAAC", "PAAC", "Geary", "Moran", "MoreauBroto", "QSO", "SOCN"))
-  featuresDB = createFeaturesDB(paths[['uniprotProteome']], save = paths[['featuresDB_full_100']], lambda = 100, cores = cores,
-                                features = c("APAAC", "PAAC", "Geary", "Moran", "MoreauBroto", "QSO", "SOCN"))
+if (rebuildDisorderProteome || !file.exists(paths[['disorderProteomeHuman']])) {
+  print('Building disorder proteome...')
+  disorderPred = d2p2DisorderHuman %>%
+    dplyr::filter(d2p2_id %in% proteome[['d2p2_id']])
+  tmp = extractDisorder(disorderPred = disorderPred, proteome = proteome,
+                        disorder_idCol = 'd2p2_id', disorder_predCol = 'predictor_id',
+                        proteome_seqCol = 'seq', proteome_idCol = 'd2p2_id',
+                        uniqueNames = TRUE)
+  saveRDS(tmp, file=paths[['disorderProteomeHuman']])
+  disorderSeqs = tmp$disorderSeqs
 } else {
-  if (useExistingFeaturesDB && file.exists(paths[['featuresDB_full']])) {
-    featuresDB = readRDS(paths[['featuresDB_full']])
-  } else if (useExistingFeaturesDB && file.exists(paths[['featuresDB_small']])) {
-    featuresDB = readRDS(paths[['featuresDB_small']])
-  } else {
-    # create small features database consisting only of unique identifiers in data
-    ids = NULL
-    for (i in 1:nTrainFiles) {
-      trainset = readr::read_tsv(file.path(paths[['dirDataML']], trainset_files[i]))
-      ids = c(ids, trainset[["p1_uniprotName"]], trainset[["p2_uniprotName"]])
-    }
-    for (i in 1:nTestFiles) {
-      testset = readr::read_tsv(file.path(paths[['dirDataML']], testset_files[i]))
-      ids = c(ids, testset[["p1_uniprotName"]], testset[["p2_uniprotName"]])
-    }
-    ids = sort(unique(ids))
+  print(paste('Reading existing proteome:', paths[['disorderProteomeHuman']]))
+  tmp = readRDS(paths[['disorderProteomeHuman']])
+  disorderSeqs = tmp$disorderSeqs
+}
+```
 
-    featuresDB = createFeaturesDB(paths[['uniprotProteome']], ids = ids, save = paths[['featuresDB_small']], cores = cores)
+Compute and save features
+
+```{r featurize}
+if (keepFeaturesInMemory) {
+  featuresDB = list()
+}
+
+for (seqtype in seqtypes) {
+  if (seqtype == 'full') {
+    seqs = as.vector(proteome[['seq']])
+    names(seqs) = proteome[['d2p2_id']]
+  } else if (seqtype == 'disorder') {
+    seqs = as.vector(disorderSeqs)
   }
-  ids = names(featuresDB[[1]])
+  
+  for (i in 1:length(lambdas)) {
+    lambda = lambdas[[i]]
+    features = features_sets[[i]]
+    print(paste('Creating feature database:', paste('features', paste0(seqtype, lambda), 'human', sep='_')))
+    
+    mat = featurizeSeqs(seqs, lambda=lambda, features=features, cores=cores, format='matrix',
+                        save=paths[[paste('features', paste0(seqtype, lambda), 'human', 'orig', sep='_')]])
+    
+    if (keepFeaturesInMemory) {
+      featuresDB[[paste0(seqtype, lambda)]] = mat
+    }
+  }
 }
 ```
 
-```{r}
-featuresDB_full_0 = readRDS(paths[['featuresDB_full_0']])
-featuresDB_full_50 = readRDS(paths[['featuresDB_full_50']])
-ids = intersect(names(featuresDB_full_50[[1]]), names(featuresDB_full_0[[1]]))
-
-featuresDB_full = c(featuresDB_full_0, featuresDB_full_50)
-for (feature in names(featuresDB_full)) {
-  featuresDB_full[[feature]] = featuresDB_full[[feature]][ids]
-}
-```
-
-```{r}
-dataAll_trim = readr::read_tsv(paths[['IDPpi_dataAll_trim']])
-valid = (dataAll_trim[["p1_uniprotName"]] %in% ids) & (dataAll_trim[["p2_uniprotName"]] %in% ids)
-print(paste("number of invalid:", sum(!valid)))
-dataAll_trim = dataAll_trim[valid,]
-featuresAll_trim = matchFeatures(dataAll_trim, featuresDB_full,
-  features = c('AAC', 'CTDD', 'CTDT', 'CTriad', 'DC', 'APAAC', 'Geary', 'Moran', 'MoreauBroto', 'QSO', 'SOCN'),
-  dataset_cols = c("p1_uniprotName", "p2_uniprotName"),
-  features_path = paths[['IDPpi_featuresAll_noTC_trim_unc']],
-  labels_path = paths[['IDPpi_labelsAll_trim']])
-```
-
-```{r}
-nCols = ncol(featuresAll_trim)
-aug = cbind(featuresAll_trim[,(nCols/2+1):nCols], featuresAll_trim[, 1:(nCols/2)])
-names(aug) = names(featuresAll_trim) # rbind() requires non-null matching column names
-featuresAll_aug = rbind(featuresAll_trim, aug)
-labelsAll_aug = rbind(dataAll_trim[['label']], dataAll_trim[['label']])
-readr::write_lines(labelsAll_aug, paths[['IDPpi_labelsAll_aug']])
-rm(aug)
-```
-
-```{r}
-p = prcomp(featuresAll_aug, scale.=TRUE)
-featuresPCA = p$x[,p$sdev > 1]
-readr::write_tsv(as.data.frame(featuresPCA), paths[['IDPpi_featuresPCA_unc']])
-```

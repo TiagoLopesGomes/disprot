@@ -3,23 +3,22 @@ title: "visualizeData"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, results = "hold", fig.show = "hold")
-library(GenomicRanges)
-library(Biostrings)
+# Setup
+
+```{r setup, message = FALSE}
+knitr::opts_chunk$set(echo = TRUE, results = "hold", fig.show = "hold")
+library(readr)
 library(dplyr)
-library(reticulate)
 library(ggplot2)
+library(reticulate)
 # use_condaenv("rpy3_tmp")
 Sys.setenv("RETICULATE_PYTHON"="/home/users/bentyeh/miniconda3/envs/rpy3_tmp/bin/python")
-options(stringsAsFactors = FALSE)
+options(stringsAsFactors=FALSE, warn=1)
 
 if (.Platform$OS.type == "unix") {
     projectDir = normalizePath("~/projects/disprot")
-    source("~/scripts/R/utils-convert.R")
 } else {
     projectDir = normalizePath("~/Projects/disprot")
-    source("~/Projects/scripts_private/R/utils-convert.R")
 }
 files <- import_from_path(module='files', path=file.path(projectDir, 'scripts'))
 paths = files$getPaths()
@@ -29,106 +28,61 @@ source(file.path(projectDir, 'scripts', 'featurize.R'))
 
 # Get Data
 
-Reference data sources
+### Read in features database
 
-```{r}
-disorderPredAll = readr::read_tsv(paths[['d2p2DisorderHuman_vsl2b']])
-idMap = readr::read_tsv(paths[['idMap']]) %>%
-  dplyr::filter(!is.na(d2p2_id)) %>%
-  dplyr::filter(!duplicated(d2p2_id))
-aaProps = readr::read_tsv(paths[['aaProps']])
-aaClassMap = dfToNamedVec(df = aaProps, key = "AA", value = "class")
-# featuresDB = readRDS(paths[['featuresDB_full_0']])
-uniprotProteome = readr::read_tsv(paths[['uniprotProteome']])
+`featuresDB`: mapping from character (`seqtype``lambda`) to matrix (rows = proteins, columns = features)
+
+```{r featuresDB, message = FALSE}
+featuresDB = list()
+col_types = cols(.default = col_double(), rowname = col_character())
+seqtypes = c('full', 'disorder')
+lambdas = c(0, 25, 50, 75, 100)
+for (seqtype in seqtypes) {
+  for (lambda in lambdas) {
+    print(paste0(seqtype, lambda))
+    featuresDB[[paste0(seqtype, lambda)]] = as.matrix(
+      readr::read_tsv(
+        file = paths[[paste('features', paste0(seqtype, lambda), 'human', sep='_')]],
+        col_types = col_types) %>%
+      tibble::column_to_rownames()
+    )
+  }
+}
 ```
 
-Gene lists
+### Gene lists
 
-```{r}
-gl_TFs = readr::read_tsv(paths[['gl_TFs']])
-gl_random = readr::read_tsv(paths[['gl_random']])
-gl_medComplex = readr::read_tsv(paths[['gl_medComplex']])
-gl_mediatorTFs_human = readr::read_tsv(paths[['gl_mediatorTFs_human']])
-gl_POLR = readr::read_tsv(paths[['gl_POLR']])
-gl_activator = readr::read_tsv(paths[['gl_activator']])
-gl_repressor = readr::read_tsv(paths[['gl_repressor']])
-glAll = dplyr::bind_rows(
-  dplyr::mutate(gl_random, label='random'),
-  dplyr::mutate(gl_TFs, label='TFs'),
-  dplyr::mutate(gl_mediatorTFs_human, label='mediatorTFs'),
-  dplyr::mutate(gl_medComplex, label='medComplex'),
-  dplyr::mutate(gl_POLR, label='POLR'))
-```
+- Extract name of gene list (i.e., remove 'gl_' from the gene list name)
+- Create directory in which to store plots: [gene list 1]_[gene list 2]
 
-Combine gene lists
-
-```{r}
-disorderSeqsList = AAStringSetList(random=disorderSeqs_random, TFs=disorderSeqs_TFs)
-disorderRangesList = list(random=disorderRanges_random, TFs=disorderRanges_TFs)
+```{r gls}
+gl_names = c('gl_TFs', 'gl_random')
+gls = sapply(gl_names,
+             function(gl_name) unlist(readr::read_tsv(paths[[gl_name]]) %>% dplyr::select(d2p2_id)))
+gl_names_short = sub(pattern = 'gl_', replacement = '', x = gl_names)
+plotsDir = file.path(paths[['dirResults']], paste0(gl_names_short, collapse='-'))
+dir.create(plotsDir)
 ```
 
 # Visualize Data
 
-## Full sequences
+## Featurization
 
-```{r}
-glAll = glAll %>% dplyr::mutate(uniprotName = uniprotProteome[['uniprotName']][match(glAll[['uniprot_id']], uniprotProteome[['id']])])
-glAll = glAll[!duplicated(glAll),]
-glAll_features = matchFeatures(glAll, featuresDB, dataset_cols = "uniprotName", features = NULL)
+Script parameters
+- `seqtypes`: 'full' (entire sequence); 'disorder' (only disordered regions)
+- `lambdas`: sequence length thresholds
+- `transformations`: 'PCA'; 't-SNE'
+- `col_types`: column types for reading in features database
+
+```{r params}
+seqtypes = c('full', 'disorder')
+lambdas = c(0, 25, 50, 75, 100)
+transformations = c('PCA', 't-SNE')
 ```
 
-```{r}
-p = prcomp(glAll_features)
-data = as.data.frame(p$x)
-data$label = glAll[['label']][glAll[['uniprotName']] %in% names(featuresDB$aac)]
-pca = ggplot(data = data) +
-  geom_point(aes_string(x = "PC1", y = "PC2", color='label'))
+Create visualization given complete features database (`featuresDB` list mapping from name (`seqtype``lambda`) --> features matrix)
+
+```{r vis}
+compareGeneListsAllFeatures(gls, featuresDB, seqtypes, lambdas, transformations, plotsDir)
 ```
 
-```{r}
-ggplot(data = data) + geom_point(aes_string(x = "PC1", y = "PC2", color='label'))
-ggplot(data = data) + geom_point(aes_string(x = "PC3", y = "PC4", color='label'))
-ggplot(data = data) + geom_point(aes_string(x = "PC5", y = "PC6", color='label'))
-ggplot(data = data) + geom_point(aes_string(x = "PC1", y = "PC2", color='label'))
-```
-
-## Disordered Regions
-
-Set disordered region length threshold
-
-```{r}
-thresh = 50
-```
-
-### Sequence analysis
-
-```{r}
-g = compareGeneLists(gls = list(activator = gl_activator, repressor = gl_repressor),
-                     disorderPredAll = disorderPredAll,
-                     proteome = idMap,
-                     features = c("AAC", "DC", "CTriad", "PAAC", "Geary"),
-                     minLength = 30)
-```
-
-```{r}
-plotCharFreq(disorderSeqsList, scale=TRUE, thresh=50, aaClassMap=aaClassMap)
-```
-
-### Disorder Analysis
-
-```{r}
-g = plotHist(disorderRangesList, fun = width, varname = "width", thresh = 50, plot = FALSE)
-print(g + scale_x_log10() + labs(title = "Length of disordered regions"))
-
-g = plotHist(disorderRangesList, fun = function(x) {calcProps(x, "prop_dr")},
-             varname = "percent_disordered", thresh = 50, plot = FALSE)
-print(g + labs(title = "Percent disordered"))
-
-g = plotHist(disorderRangesList, fun = function(x) {calcProps(x, "num_dr")},
-             varname = "number_of_disordered_regions", thresh = 50, plot = FALSE)
-print(g + scale_x_log10() + labs(title = "Number of disordered regions"))
-
-g = plotHist(disorderRangesList, fun = function(x) {calcProps(x, "num_dr_norm")},
-             varname = "number_of_disordered_regions", thresh = 50, plot = FALSE)
-print(g + labs(title = "Number of disordered regions normalized by protein length"))
-```

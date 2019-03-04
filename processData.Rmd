@@ -6,7 +6,9 @@ output: html_notebook
 
 # Setup
 
-```{r setup}
+```{r setup, message = FALSE}
+# set default global knitr options
+knitr::opts_chunk$set(echo = TRUE, results = 'hold', fig.show = 'hold')
 library(biomaRt)
 library(dplyr)
 library(reticulate)
@@ -29,7 +31,7 @@ paths = files$getPaths()
 
 BioMart: download Ensembl (gene, transcript, protein) <-> UniProt <-> HGNC symbol + APPRIS annotation for proteins in the UniProt canonical transcripts proteome.
 
-```{r}
+```{r, message = FALSE}
 uniprotProteome = readr::read_tsv(paths[['uniprotProteome']])
 mart = biomaRt::useMart(biomart = 'ensembl', dataset = 'hsapiens_gene_ensembl')
 df = biomaRt::getBM(
@@ -48,7 +50,7 @@ readr::write_tsv(df, paths[['ensemblBiomart_raw']])
 
 # Process Data
 
-```{r}
+```{r, message = FALSE}
 uniprotProteome = readr::read_tsv(paths[['uniprotProteome']])
 idMap = readr::read_tsv(paths[['idMap']]) %>%
   dplyr::filter(!is.na(d2p2_id)) %>%
@@ -59,7 +61,7 @@ idMap = readr::read_tsv(paths[['idMap']]) %>%
 
 Transcription factors reported to interact with mediator subunits (Source: Boija, A. et al. Cell 175, (2018). Table S1.)
 
-```{r}
+```{r, message = FALSE}
 tb = readr::read_tsv(paths[['gl_mediatorTFs_raw']])
 gl = unique(c(unlist(tb), names(tb)))
 gl = gl[!is.na(gl)]

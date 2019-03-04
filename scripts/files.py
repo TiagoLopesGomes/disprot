@@ -151,8 +151,15 @@ def getPaths(projectDir=None, ext='.gz', makedirs=True):
         'gl_random': os.path.join(dirDataGeneLists, 'gl_random.tsv' + ext),
         
         # miscellaneous
+        # - standardChromosomes: list of 22 autosomes (chr1 - chr22) + sex chromosomes (chrX, chrY)
+        #     + mitochondrial DNA (chrM); UCSC-based chromosome names
+        # - aaProps: table (with header) of each amino acid and its side chain class
+        # - disorderProteomeHuman: R list of disorderRanges (GRanges) and corresponding
+        #     disorderSeqs (AAStringSet) extracted from ensemblProteome63. Names of disorderSeqs
+        #     are "[D2P2 ID]_[start position in protein sequence]"
         'standardChromosomes': os.path.join(dirDataRaw, 'standardChromosomes.txt'),
         'aaProps': os.path.join(dirDataAux, 'aaProps.tsv'),
+        'disorderProteomeHuman': os.path.join(dirDataAux, 'disorderProteomeHuman.RDS'),
         
         # results
         'seqPlots': os.path.join(dirResults_seqPlots, '{}.png'),
@@ -182,6 +189,35 @@ def getPaths(projectDir=None, ext='.gz', makedirs=True):
         'ml_val_labels': os.path.join(dirDataML, 'val_labels.tsv' + ext),
         'ml_test_features': os.path.join(dirDataML, 'test_features.tsv' + ext),
         'ml_test_labels': os.path.join(dirDataML, 'test_labels.tsv' + ext),
+        
+        # featurization databases / matrices
+        #   naming: features_[seqtype][#]_[organism].format
+        #   - seqtype: 'disorder' (disordered regions) or 'full' (full-length sequences)
+        #   - #: lambda/nlag parameter(s); if seqtype == 'disorder', also minimum disorder region length
+        #     - if # > 0, only contains length-dependent features
+        #         for table (tsv) format, horizontally concatenate with table where # = 0 to recover
+        #         full feature matrix
+        #   - format: 'tsv[.gz]' (feature table/matrix) or '.RDS' (feature lists) - see featurize.R
+        'features_full0_human': os.path.join(dirDataAux, 'features_full0_human.tsv' + ext),
+        'features_full25_human': os.path.join(dirDataAux, 'features_full25_human.tsv' + ext),
+        'features_full50_human': os.path.join(dirDataAux, 'features_full50_human.tsv' + ext),
+        'features_full75_human': os.path.join(dirDataAux, 'features_full75_human.tsv' + ext),
+        'features_full100_human': os.path.join(dirDataAux, 'features_full100_human.tsv' + ext),
+        'features_disorder0_human': os.path.join(dirDataAux, 'features_disorder0_human.tsv' + ext),
+        'features_disorder25_human': os.path.join(dirDataAux, 'features_disorder25_human.tsv' + ext),
+        'features_disorder50_human': os.path.join(dirDataAux, 'features_disorder50_human.tsv' + ext),
+        'features_disorder75_human': os.path.join(dirDataAux, 'features_disorder75_human.tsv' + ext),
+        'features_disorder100_human': os.path.join(dirDataAux, 'features_disorder100_human.tsv' + ext),
+        'features_full0_human_orig': os.path.join(dirDataAux, 'bak', 'features_full0_human.tsv' + ext),
+        'features_full25_human_orig': os.path.join(dirDataAux, 'bak', 'features_full25_human.tsv' + ext),
+        'features_full50_human_orig': os.path.join(dirDataAux, 'bak', 'features_full50_human.tsv' + ext),
+        'features_full75_human_orig': os.path.join(dirDataAux, 'bak', 'features_full75_human.tsv' + ext),
+        'features_full100_human_orig': os.path.join(dirDataAux, 'bak', 'features_full100_human.tsv' + ext),
+        'features_disorder0_human_orig': os.path.join(dirDataAux, 'bak', 'features_disorder0_human.tsv' + ext),
+        'features_disorder25_human_orig': os.path.join(dirDataAux, 'bak', 'features_disorder25_human.tsv' + ext),
+        'features_disorder50_human_orig': os.path.join(dirDataAux, 'bak', 'features_disorder50_human.tsv' + ext),
+        'features_disorder75_human_orig': os.path.join(dirDataAux, 'bak', 'features_disorder75_human.tsv' + ext),
+        'features_disorder100_human_orig': os.path.join(dirDataAux, 'bak', 'features_disorder100_human.tsv' + ext),
         
         'featuresDB_full_0': os.path.join(dirDataAux, 'featuresDB_full_0.RDS'),
         'featuresDB_full_50': os.path.join(dirDataAux, 'featuresDB_full_50.RDS'),

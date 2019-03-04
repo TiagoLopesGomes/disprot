@@ -1,0 +1,146 @@
+---
+title: "Clean-up Feature Databases"
+output: html_document
+---
+
+```{r setup, message = FALSE}
+# set default global knitr options
+knitr::opts_chunk$set(echo = TRUE, results = 'hold', fig.show = 'hold')
+library(readr)
+library(dplyr)
+library(reticulate)
+# use_condaenv('rpy3_tmp')
+Sys.setenv('RETICULATE_PYTHON'='/home/users/bentyeh/miniconda3/envs/rpy3_tmp/bin/python')
+options(stringsAsFactors=FALSE, warn=1)
+
+if (.Platform$OS.type == 'unix') {
+    projectDir = normalizePath('~/projects/disprot')
+} else {
+    projectDir = normalizePath('~/Projects/disprot')
+}
+
+files = reticulate::import_from_path(module='files', path=file.path(projectDir, 'scripts'))
+paths = files$getPaths()
+source(file.path(projectDir, 'scripts', 'disorderedSeqs.R'))
+source(file.path(projectDir, 'scripts', 'featurize.R'))
+```
+
+Read in original features database
+
+```{r, message = FALSE}
+featuresDB_orig = list()
+col_types = cols(.default = col_double(), rowname = col_character())
+seqtypes = c('full', 'disorder')
+lambdas = c(0, 25, 50, 75, 100)
+for (seqtype in seqtypes) {
+  for (lambda in lambdas) {
+    db_name = paste0(seqtype, lambda)
+    print(db_name)
+    featuresDB_orig[[paste0(seqtype, lambda)]] = readr::read_tsv(
+      file = paths[[paste('features', db_name, 'human', 'orig', sep='_')]],
+      col_types = col_types)
+  }
+}
+```
+
+Drop rows (proteins) with NA-valued features
+
+```{r}
+featuresDB = list()
+for (seqtype in seqtypes) {
+  for (lambda in lambdas) {
+    db_name = paste0(seqtype, lambda)
+    featuresDB[[db_name]] = featuresDB_orig[[db_name]] %>% tidyr::drop_na()
+    #featuresDB[[db_name]] %>%
+    #  readr::write_tsv(path = paths[[paste('features', db_name, 'human', sep='_')]])
+  }
+}
+```
+
+See which sequence identifiers were differentially dropped across features databases
+
+```{r}
+for (seqtype in seqtypes) {
+  for (lambda in setdiff(lambdas, 0)) {
+    db_name = paste0(seqtype, lambda)
+    print('--------------------')
+    print(db_name)
+    db_rownames = rownames(featuresDB[[db_name]])
+    db0_rownames = rownames(featuresDB[[paste0(seqtype, 0)]])
+    # print('The following sequence identifiers are only available in the length-independent database:')
+    # print(setdiff(db0_rownames, db_rownames))
+    print('The following sequence identifiers are only available in the length-dependent database:')
+    print(setdiff(db_rownames, db0_rownames))
+    print('--------------------')
+  }
+}
+```
+
+Create dataframe of locations (rows = sequence ID, columns = features) of NA values
+
+```{r}
+na_rcs = list()
+for (seqtype in seqtypes) {
+  for (lambda in lambdas) {
+    db_name = paste0(seqtype, lambda)
+    print(db_name)
+    
+    isNaDB = is.na(featuresDB_orig[[db_name]])
+    naInds = arrayInd(which(isNaDB), dim(isNaDB))
+    na_rownames = featuresDB_orig[[db_name]][['rowname']][naInds[,1]]
+    na_colnames = colnames(featuresDB_orig[[db_name]])[naInds[,2]]
+    stopifnot(length(na_rownames) == length(na_colnames))
+    
+    if (length(na_rownames) > 0) {
+      na_rcs[[db_name]] = data.frame(db = db_name, rownames = na_rownames, colnames = na_colnames)
+    } else {
+      na_rcs[[db_name]] = NULL
+    }
+  }
+}
+na_df = do.call(rbind, na_rcs)
+na_df[['featureClass']] = sapply(strsplit(na_df$colnames, '_'), FUN = function(x) x[1])
+na_df_byFeatureClass = na_df[!duplicated(na_df[c('db', 'rownames', 'type')]),]
+```
+
+```{r}
+disorderSeqs = readRDS(paths[['disorderProteomeHuman']])[['disorderSeqs']]
+d2p2ProteomeHuman = readr::read_tsv(paths[['d2p2ProteomeHuman']])
+ensemblProteome = readr::read_tsv(paths[['ensemblProteome63']])
+proteome = ensemblProteome %>%
+  dplyr::rename(ensembl_peptide_id = id) %>%
+  dplyr::select(ensembl_peptide_id, seq) %>%
+  dplyr::right_join(d2p2ProteomeHuman, by = 'ensembl_peptide_id') %>%
+  dplyr::select(ensembl_peptide_id, d2p2_id, seq) %>%
+  dplyr::distinct(d2p2_id, .keep_all = TRUE) %>%
+  dplyr::mutate(width = nchar(seq))
+
+# map of full sequence IDs (d2p2_id) to width
+widths_full = unlist(proteome[['width']])
+names(widths_full) = proteome[['d2p2_id']]
+fullIds = startsWith(na_df_byFeatureClass[['db']], 'full')
+na_df_byFeatureClass[['width']][fullIds] = widths_full[na_df_byFeatureClass[['rownames']][fullIds]]
+
+# map of disorder sequence IDs ([d2p2_id]_[start]) to width
+widths_disorder = width(disorderSeqs)
+names(widths_disorder) = names(disorderSeqs)
+disorderIds = startsWith(na_df_byFeatureClass[['db']], 'disorder')
+na_df_byFeatureClass[['width']][disorderIds] = widths_disorder[na_df_byFeatureClass[['rownames']][disorderIds]]
+
+na_df_long = na_df_byFeatureClass %>% dplyr::filter(width > 2)
+dim(na_df_long)
+proteome %>% dplyr::filter(d2p2_id %in% na_df_long[['rownames']])
+disorderSeqs[names(disorderSeqs) %in% na_df_long[['rownames']]]
+```
+
+Summary
+- NA values only occur in full0, full25, disorder0, and disorder25
+  - All NA values in full0 and disorder0 occur because the sequence length < 3
+  - All NA values in full25 and disorder25 are caused by 4 proteins and 2 feature classes
+    - Proteins: ENSP (D2P2_ID): seq
+      - ENSP00000441807 (32711555): KEKKEERKKERKKEERKKERKKERKKEKERKKEKER
+      - ENSP00000446694 (32708242): KRKKKERKKERKKKERKKERKKERKKEKERKKEKER
+      - ENSP00000449099 (32710664): KRKKKERKKERRKKERKKERKKERKKEKERKKEKER
+      - ENSP00000449265 (32706482): KEKKEERKKERKKKERKKERKKERKREKERKKEKER
+    - Feature classes: Geary, Moran
+    - These proteins are predicted to be fully disordered by VSL2b, so their disordered "subsequences" (32711555_1, 32708242_1, 32710664_1, 32706482_1), which are really just the full length sequences, also have NA-valued features.

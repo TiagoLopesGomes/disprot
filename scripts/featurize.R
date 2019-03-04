@@ -3,163 +3,178 @@ library(readr)
 library(dplyr)
 library(parallel)
 
-createFeaturesDB <- function(proteome, seq_col = "seq", name_col = "uniprotName", ids = NULL,
-                             features = NULL, lambda = 0, nlag = lambda, save = NULL, cores = NULL) {
-  # Create features database. Feature extraction on each unique sequence. Only keeps sequences
-  # consisting of the 20 canonical amino acids and with length > lambda
+# Notes
+# - class: compositional, pseudo-amino acid composition, autocorrelational
+# - feature: AAC, CTDC, CTDD, ...
+# - descriptor: (e.g., for PAAC) Xc1.A, Ac1.R, Xc1.N, ...
+
+# --- CONSTANTS --- #
+
+# compositional features
+featureFuns_comp = c(
+  AAC = protr::extractAAC,
+  CTDC = protr::extractCTDC,
+  CTDD = protr::extractCTDD,
+  CTDT = protr::extractCTDT,
+  CTriad = protr::extractCTriad,
+  DC = protr::extractDC,
+  TC = protr::extractTC
+)
+# pseudo-amino acid composition features
+featureFuns_paac = c(
+  APAAC = protr::extractAPAAC,
+  PAAC = protr::extractPAAC
+)
+# autocorrelational features
+featureFuns_cor = c(
+  Geary = protr::extractGeary,
+  Moran = protr::extractMoran,
+  MoreauBroto = protr::extractMoreauBroto,
+  QSO = protr::extractQSO,
+  SOCN = protr::extractSOCN
+)
+featureFuns_all = c(featureFuns_comp, featureFuns_paac, featureFuns_cor)
+
+# --- FUNCTIONS --- #
+
+featurizeSeq <- function(seq, features, lambda, nlag, name_prefix = TRUE) {
+  # Featurize a single sequence.
+  # 
+  # Args
+  # - seq: character
+  #     sequence to featurize
+  # - features: vector
+  #     features to include. See names of featureFuns* vectors
+  # - lambda: integer
+  #     Parameter for pseudo amino acid composition features (PAAC, APAAC)
+  # - nlag: integer
+  #     Parameter for autocorrelational features (Geary, Moran, MoreauBroto, QSO, SOCN)
+  # - name_prefix: character. default = TRUE
+  #     Append feature name as prefix to each of its descriptor names to ensure unique
+  #     descriptor names.
+  # 
+  # Returns: vector, character
+  #   Named vector
+  
+  vec = NULL
+  for (feature in features) {
+    # See https://stackoverflow.com/q/13992367 for conditional inclusion of arguments (lambda, nlag)
+    new_vec = do.call(
+      featureFuns_all[[feature]],
+      list(x = seq, lambda = lambda, nlag = nlag)[c(T, feature %in% names(featureFuns_paac), feature %in% names(featureFuns_cor))])
+    if (name_prefix) {
+      names(new_vec) = paste(feature, names(new_vec), sep = "_")
+    }
+    vec = c(vec, new_vec)
+  }
+  invisible(vec)
+}
+
+featurizeSeqs <- function(seqs, features = NULL, lambda = 0, nlag = lambda, format = "matrix", save = NULL, cores = NULL) {
+  # Featurize a set of sequences. Exclude sequences with length <= lambda, nlag.
   # 
   # Notes: requires parallel package
   # 
   # Args
-  # - proteome: data.frame or character
-  #     Must contain `seq_col` and `name_col` columns. The `name_col` column is assumed to
-  #     consist of unique values. If a character, assumed to be the path to a tab-separated
-  #     proteome data frame file.
-  # - seq_col: character. default = "seq"
-  #     Column in `proteome` containing sequences
-  # - name_col: character. default = "uniprotName"
-  #     Column in `proteome` containing sequence identifiers
-  # - ids: vector, character. default = NULL
-  #     Sequence identifiers to include. If NULL, include all peptides in `proteome`.
+  # - seqs: vector, character
+  #     named vector of sequences
   # - features: vector, character. default = NULL
-  #     Features to use. See the featureFuns map in the code below.
+  #     Features to use. See the featureFuns map.
   #     If NULL, all features are extracted.
   # - lambda: integer. default = 0
-  #     Parameter for pseudo amino acid composition descriptors (PAAC, APAAC)
-  #     Must be > 0 for pseudo amino acid composition descriptors to be used.
+  #     Parameter for pseudo amino acid composition features (PAAC, APAAC)
+  #     Must be > 0 for pseudo amino acid composition features to be used.
   # - nlag: integer. default = lambda
-  #     Parameter for autocorrelational descriptors (Geary, Moran, MoreauBroto, QSO, SOCN)
-  #     Must be > 0 for autocorrelational descriptors to be used.
+  #     Parameter for autocorrelational features (Geary, Moran, MoreauBroto, QSO, SOCN)
+  #     Must be > 0 for autocorrelational features to be used.
+  # - format: character. default = "matrix"
+  #     Class and format of returned featurizations
+  #     - "matrix": feature matrix. rows = sequences, columns = features
+  #     - "list": each element (feature category) is a named list mapping sequence name 
+  #         to a vector of values in that feature category
   # - save: character. default = NULL
   #     Path to save created features database.
+  #     If `format` == "matrix": save as TSV file
+  #     If `format` == "list": save as RDS file
   # - cores: integer. default = NULL
   #     Number of cores to use. By default, uses parallel::detectCores() - 1
   # 
-  # Returns: list, list, vector
-  #   Features database. Each element (feature category) is a named list mapping peptide name
-  #   to a vector of values in that feature category.
+  # Returns: see `format` argument
+  
+  # validate arguments
+  stopifnot(format %in% c("matrix", "list"))
+  stopifnot(is.null(save) || is.character(save))
+  stopifnot(is.null(cores) || is.numeric(cores))
+  cores = ifelse(is.numeric(cores), cores, parallel::detectCores() - 1)
 
-  if (is.character(proteome)) {
-    proteome = readr::read_tsv(proteome)
+  # only keep sequences consisting of the 20 canonical amino acids and with length > lambda, nlag
+  validSeqs = sapply(seqs, function(x) protr::protcheck(x) & nchar(x) > lambda & nchar(x) > nlag)
+  if (sum(validSeqs) < length(seqs)) {
+    warning(paste("Excluding", sum(!validSeqs), "out of", length(seqs),
+                  "sequences with length <= min(lambda, nlag) or non-canonical AAs from features database.\n"))
   }
-  
-  # only keep sequences consisting of the 20 canonical amino acids and with length > lambda
-  validSeqs = sapply(proteome$seq, function(x) protr::protcheck(x) & nchar(x) > lambda)
-  if (sum(validSeqs) != nrow(proteome)) {
-    warning(paste0("Excluding ", sum(!validSeqs), " sequences with length <= lambda from features database."))
-  }
-  proteome = proteome[validSeqs,]
-  
-  featureFuns_0 = c(AAC = protr::extractAAC,
-                    CTDC = protr::extractCTDC,
-                    CTDD = protr::extractCTDD,
-                    CTDT = protr::extractCTDT,
-                    CTriad = protr::extractCTriad,
-                    DC = protr::extractDC,
-                    TC = protr::extractTC)
-  
-  featureFuns_lambda = c(APAAC = protr::extractAPAAC,
-                         PAAC = protr::extractPAAC)
-  
-  featureFuns_nlag = c(Geary = protr::extractGeary,
-                       Moran = protr::extractMoran,
-                       MoreauBroto = protr::extractMoreauBroto,
-                       QSO = protr::extractQSO,
-                       SOCN = protr::extractSOCN)
+  seqs = seqs[validSeqs]
   
   # choose features if no features specified (`features` is NULL)
   if (is.null(features)) {
-    features = names(featureFuns_0)
+    features = names(featureFuns_comp)
     if (lambda > 0) {
-      features = c(features, names(featureFuns_lambda))
+      features = c(features, names(featureFuns_paac))
     }
     if (nlag > 0) {
-      features = c(features, names(featureFuns_nlag))
+      features = c(features, names(featureFuns_cor))
     }
   }
   
   # validate features
-  stopifnot(features %in% c(names(featureFuns_0), names(featureFuns_lambda), names(featureFuns_nlag)))
-  if (lambda <= 0 && any(features %in% names(featureFuns_lambda))) {
+  stopifnot(features %in% names(featureFuns_all))
+  if (lambda <= 0 && any(features %in% names(featureFuns_paac))) {
     stop("Must supply lambda > 0 to use pseudo amino acid composition descriptors")
   }
-  if (nlag <= 0 && any(features %in% names(featureFuns_nlag))) {
+  if (nlag <= 0 && any(features %in% names(featureFuns_cor))) {
     stop("Must supply nlag > 0 to use autocorrelational descriptors")
   }
-  
-  # choose sequences to featurize by id
-  if (is.null(ids)) {
-    seqs = proteome[[seq_col]]
-    names(seqs) = proteome[[name_col]]
-  } else {
-    idx = match(ids, proteome[[name_col]])
-    valid = !is.na(idx)
-    ids = ids[valid]
-    seqs = proteome[["seq"]][idx[valid]]
-    names(seqs) = ids
-  }
 
+  # compute features
   featuresDB = list()
   if (.Platform$OS.type == "unix") {
-    if (!is.numeric(cores)) {
-      cores = parallel::detectCores() - 1
-    }
-    for (feature in intersect(names(featureFuns_0), features)) {
-      featuresDB[[feature]] = parallel::mclapply(X = seqs, FUN = featureFuns_0[[feature]], mc.cores = cores)
-    }
-    for (feature in intersect(names(featureFuns_lambda), features)) {
-      featuresDB[[feature]] = parallel::mclapply(X = seqs, FUN = function(x) featureFuns_lambda[[feature]](x, lambda = lambda), mc.cores = cores)
-    }
-    for (feature in intersect(names(featureFuns_nlag), features)) {
-      featuresDB[[feature]] = parallel::mclapply(X = seqs, FUN = function(x) featureFuns_nlag[[feature]](x, nlag = nlag), mc.cores = cores)
-    }
-    # featuresDB[["aac"]] = parallel::mclapply(X = seqs, FUN = protr::extractAAC, mc.cores = cores)
-    # featuresDB[["dc"]] = parallel::mclapply(X = seqs, FUN = protr::extractDC, mc.cores = cores)
-    # featuresDB[["tc"]] = parallel::mclapply(X = seqs, FUN = protr::extractTC, mc.cores = cores)
-    # featuresDB[["ctdc"]] = parallel::mclapply(X = seqs, FUN = protr::extractCTDC, mc.cores = cores)
-    # featuresDB[["ctdt"]] = parallel::mclapply(X = seqs, FUN = protr::extractCTDT, mc.cores = cores)
-    # featuresDB[["ctdd"]] = parallel::mclapply(X = seqs, FUN = protr::extractCTDD, mc.cores = cores)
-    # featuresDB[["ctriad"]] = parallel::mclapply(X = seqs, FUN = protr::extractCTriad, mc.cores = cores)
-    # featuresDB[["paac"]] = parallel::mclapply(X = seqs, FUN = function(x) protr::extractPAAC(x, lambda = lambda), mc.cores = cores)
-  } else {
-    if (is.numeric(cores)) {
-      cl = parallel::makeCluster(cores)
+    # use multicore-based parallelisation (fork)
+    if (format == "list") {
+      for (feature in features) {
+        featuresDB[[feature]] = parallel::mcmapply(
+          FUN = featureFuns_all[[feature]], seqs,
+          MoreArgs = list(lambda = lambda, nlag = nlag)[c(feature %in% names(featureFuns_paac), feature %in% names(featureFuns_cor))],
+          mc.cores = cores)
+      }
     } else {
-      cl = parallel::makeCluster(parallel::detectCores() - 1)
+      featuresDB = t(parallel::mcmapply(FUN = function(seq) featurizeSeq(seq, features, lambda, nlag), seqs, mc.cores = cores))
+    }
+  } else {
+    # use SNOW-based parallelisation (clusters) --> need to export variables to be used by workers
+    cl = parallel::makeCluster(cores)
+    parallel::clusterExport(cl, varlist = c("featureFuns_all", "featureFuns_paac", "featureFuns_cor"))
+    
+    if (format == "list") {
+      for (feature in features) {
+        featuresDB[[feature]] = parallel::clusterMap(
+          cl, featureFuns_all[[feature]], seqs,
+          MoreArgs = list(lambda = lambda, nlag = nlag)[c(feature %in% names(featureFuns_paac), feature %in% names(featureFuns_cor))])
+      }
+    } else {
+      featuresDB = t(parallel::clusterMap(cl, featurizeSeq, seqs,
+                                          MoreArgs = list(features = features, lambda = lambda, nlag = nlag),
+                                          SIMPLIFY = TRUE))
     }
     
-    for (feature in intersect(names(featureFuns_0), features)) {
-      featuresDB[[feature]] = parallel::clusterApply(cl, seqs, featureFuns_0[[feature]])
-      names(featuresDB[[feature]]) = names(seqs)
-    }
-    for (feature in intersect(names(featureFuns_lambda), features)) {
-      featuresDB[[feature]] = parallel::clusterApply(cl, seqs, function(x) featureFuns_lambda[[feature]](x, lambda = lambda))
-      names(featuresDB[[feature]]) = names(seqs)
-    }
-    for (feature in intersect(names(featureFuns_nlag), features)) {
-      featuresDB[[feature]] = parallel::clusterApply(cl, seqs, function(x) featureFuns_nlag[[feature]](x, nlag = nlag))
-      names(featuresDB[[feature]]) = names(seqs)
-    }
-    # featuresDB[["aac"]] = parallel::clusterApply(cl, seqs, protr::extractAAC)
-    # names(featuresDB[["aac"]]) = names(seqs)
-    # featuresDB[["dc"]] = parallel::clusterApply(cl, seqs, protr::extractDC)
-    # names(featuresDB[["dc"]]) = names(seqs)
-    # featuresDB[["tc"]] = parallel::clusterApply(cl, seqs, protr::extractTC)
-    # names(featuresDB[["tc"]]) = names(seqs)
-    # featuresDB[["ctdc"]] = parallel::clusterApply(cl, seqs, protr::extractCTDC)
-    # names(featuresDB[["ctdc"]]) = names(seqs)
-    # featuresDB[["ctdt"]] = parallel::clusterApply(cl, seqs, protr::extractCTDT)
-    # names(featuresDB[["ctdt"]]) = names(seqs)
-    # featuresDB[["ctdd"]] = parallel::clusterApply(cl, seqs, protr::extractCTDD)
-    # names(featuresDB[["ctdd"]]) = names(seqs)
-    # featuresDB[["ctriad"]] = parallel::clusterApply(cl, seqs, protr::extractCTriad)
-    # names(featuresDB[["ctriad"]]) = names(seqs)
-    # featuresDB[["paac"]] = parallel::clusterApply(cl, seqs, function(x) protr::extractPAAC(x, lambda = lambda))
-    # names(featuresDB[["paac"]]) = names(seqs)
+    parallel::stopCluster(cl)
   }
 
   if (is.character(save)) {
-    saveRDS(featuresDB, file = save)
+    if (format == "list") {
+      saveRDS(featuresDB, file = save)
+    } else {
+      readr::write_tsv(x = tibble::as_tibble(featuresDB, rownames = "rowname"), path = save)
+    }
   }
 
   invisible(featuresDB)
@@ -168,7 +183,12 @@ createFeaturesDB <- function(proteome, seq_col = "seq", name_col = "uniprotName"
 matchFeatures <- function(dataset, featuresDB,
   dataset_cols = c("p1_uniprotName", "p2_uniprotName"), features = NULL,
   features_path = NULL, labels_path = NULL) {
-  # lookup features for entries in dataset from features database.
+  # lookup features for entries in dataset from list-format features database (i.e., as created
+  # by featurizeSeqs(..., format="list")).
+  # 
+  # Example: Extract features from featuresDB for genes in data frame disorderSeqs
+  #   as.matrix(matchFeatures(dataset = disorderSeqs, featuresDB = featuresDB,
+  #                           dataset_cols = "names", features = features))
   # 
   # Args
   # - dataset: data.frame
@@ -176,7 +196,8 @@ matchFeatures <- function(dataset, featuresDB,
   # - featuresDB: list, list, vector
   #     Database of features of peptides, as returned by createFeaturesDB().
   # - dataset_cols: vector, character. default = c("p1_uniprotName", "p2_uniprotName")
-  #     Columns of dataset to use for lookup.
+  #     Columns of dataset to use for lookup. If multiple column names are supplied,
+  #     feature vectors from each column are simply concatenated.
   # - features: vector, character. default = NULL
   #     Features to use from featuresDB. If NULL, all features are used.
   # - features_path: character. default = NULL
@@ -217,34 +238,6 @@ matchFeatures <- function(dataset, featuresDB,
   }
 
   invisible(df)
-}
-
-featurize <- function(disorderSeqs, features, ...) {
-  # Create feature matrix for a set of sequences
-  # 
-  # Args
-  # - disorderSeqs: AAStringSet or data.frame
-  #     Set of sequences. Assumed to already be length/width-filtered.
-  #     If data.frame, must have columns "seq" and "names", and "names" should consist of
-  #     unique values (i.e., no duplicates).
-  # - features: vector, character
-  #     Features to include. See createFeaturesDB()
-  # - ...
-  #     Arguments to pass onto createFeaturesDB(), especially "lambda" and "nlag"
-  # 
-  # Returns: matrix
-  #   Rows represent sequences. Columns are different features.
-  
-  if (inherits(disorderSeqs, 'AAStringSet')) {
-    disorderSeqs = as.data.frame(disorderSeqs) %>%
-      dplyr::rename(seq = x) %>%
-      dplyr::mutate(names = as.character(1:length(disorderSeqs))) %>%
-      tibble::as.tibble()
-  }
-  featuresDB = createFeaturesDB(proteome = disorderSeqs, name_col = "names", features = features, ...)
-  featuresMat = as.matrix(matchFeatures(dataset = disorderSeqs, featuresDB = featuresDB,
-                                        dataset_cols = "names", features = features))
-  invisible(featuresMat)
 }
 
 main <- function() {
