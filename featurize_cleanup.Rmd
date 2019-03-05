@@ -138,9 +138,10 @@ Summary
   - All NA values in full0 and disorder0 occur because the sequence length < 3
   - All NA values in full25 and disorder25 are caused by 4 proteins and 2 feature classes
     - Proteins: ENSP (D2P2_ID): seq
-      - ENSP00000441807 (32711555): KEKKEERKKERKKEERKKERKKERKKEKERKKEKER
-      - ENSP00000446694 (32708242): KRKKKERKKERKKKERKKERKKERKKEKERKKEKER
-      - ENSP00000449099 (32710664): KRKKKERKKERRKKERKKERKKERKKEKERKKEKER
-      - ENSP00000449265 (32706482): KEKKEERKKERKKKERKKERKKERKREKERKKEKER
+      - [ENSP00000441807](https://www.ensembl.org/Homo_sapiens/Transcript/Idhistory/Protein?t=ENSP00000441807) (D2P2 32711555): KEKKEERKKERKKEERKKERKKERKKEKERKKEKER
+      - [ENSP00000446694](https://www.ensembl.org/Homo_sapiens/Transcript/Idhistory/Protein?t=ENSP00000446694) (D2P2 32708242): KRKKKERKKERKKKERKKERKKERKKEKERKKEKER
+      - [ENSP00000449099](https://www.ensembl.org/Homo_sapiens/Transcript/Idhistory/Protein?t=ENSP00000449099) (D2P2 32710664): KRKKKERKKERRKKERKKERKKERKKEKERKKEKER
+      - [ENSP00000449265](https://www.ensembl.org/Homo_sapiens/Transcript/Idhistory/Protein?t=ENSP00000449265) (D2P2 32706482): KEKKEERKKERKKKERKKERKKERKREKERKKEKER
     - Feature classes: Geary, Moran
     - These proteins are predicted to be fully disordered by VSL2b, so their disordered "subsequences" (32711555_1, 32708242_1, 32710664_1, 32706482_1), which are really just the full length sequences, also have NA-valued features.
+    - All of these proteins are currently deprecated in Ensembl (Release 95). The last Ensembl release to include ENSP00000441807, ENSP00000449099, and ENSP00000449265 was Ensembl Release 75; ENSP00000446694 was last included in Ensembl Release 66.
